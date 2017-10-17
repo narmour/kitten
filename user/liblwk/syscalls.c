@@ -4,6 +4,7 @@
 #include <lwk/liblwk.h>
 #include <lwk/if_arp.h>
 #include <lwk/if.h>
+#include <lwk/read_msr.h>
 
 /**
  * There is no way to specify inline assembly constraints for %r10 (arg4),
@@ -175,6 +176,10 @@ SYSCALL4(pmem_alloc, size_t, size_t,
          const struct pmem_region *, struct pmem_region *);
 SYSCALL1(pmem_zero, const struct pmem_region *);
 
+
+
+SYSCALL1(nha_read_msr,uint64_t *);
+
 /**
  * Address space management.
  */
@@ -231,3 +236,4 @@ SYSCALL2(v3_start_guest, vaddr_t, size_t);
  */
 SYSCALL2(sched_yield_task_to, int, int);
 SYSCALL4(sched_setparams_task, int, int, int64_t, int64_t);
+

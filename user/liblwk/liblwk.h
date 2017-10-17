@@ -14,5 +14,6 @@
 #include <lwk/elf.h>
 #include <lwk/auxvec.h>
 #include <lwk/palacios.h>
+#include <lwk/read_msr.h>
 
 #endif

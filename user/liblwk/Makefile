@@ -11,6 +11,6 @@ HEADERS   = liblwk.h
 # Put liblwk.h in include/lwk dir
 HEADERS_SUBDIR = lwk
 
-liblwk_SOURCES = syscalls.c pmem.c elf.c aspace.c
+liblwk_SOURCES = syscalls.c pmem.c elf.c aspace.c read_msr.c
 
 include $(BASE)/Makefile.footer
