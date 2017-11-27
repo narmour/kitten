@@ -178,7 +178,7 @@ SYSCALL1(pmem_zero, const struct pmem_region *);
 
 
 
-SYSCALL1(nha_read_msr,uint64_t *);
+SYSCALL2(nha_read_msr,uint64_t *,int);
 
 /**
  * Address space management.

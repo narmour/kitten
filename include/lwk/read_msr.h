@@ -12,11 +12,11 @@
 
 /* user space syscall prototype */
 extern int
-nha_read_msr(uint64_t *ret);
+nha_read_msr(uint64_t *ret,int type);
 
 
 /* syscall handler prototye */
 extern int
-sys_nha_read_msr(uint64_t *ret);
+sys_nha_read_msr(uint64_t *ret,int type);
 
 #endif

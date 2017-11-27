@@ -10,18 +10,18 @@
  * ret = where to place msr data in user space. assume ret is pre allocated to NUM_MSR
  */
 int 
-sys_nha_read_msr(uint64_t *ret)
+sys_nha_read_msr(uint64_t *ret,int type)
 {
     // read the msr's into data.
-    uint64_t *data = kmalloc(sizeof(uint64_t) * NUM_MSR,GFP_USER);
-    nha_read_msr(data);
+    //uint64_t *data = kmalloc(sizeof(uint64_t) * NUM_MSR,GFP_USER);
+    uint64_t data[NUM_MSR];
+    nha_read_msr(data,type);
 
     // put data into user space
     if(copy_to_user(ret,data,sizeof(uint64_t) * NUM_MSR))
         return -EFAULT;
 
-    kfree(data);
-
+    //kfree(data);
 
 
     return 0;
@@ -29,22 +29,22 @@ sys_nha_read_msr(uint64_t *ret)
 
 /*
  * ret = where to place read MSR values in user space
+ * type = I got lazy and ddidnt want to add multiple syscalls
+ * to read a differing amount of MSRS.
+ *
+ * type0 = read tsc
+ * type1 = read msr_list
  */
 int
-nha_read_msr(uint64_t *ret){
-    uint32_t msr_list[NUM_MSR] = {MSR_APERF,MSR_MPERF,MSR_TSC,MSR_PKG_JOULES}; 
-
-    uint64_t *test = kmalloc(sizeof(uint64_t),GFP_USER);
-    rdmsrl_safe(msr_list[0],test);
-    printk("TEST: %llu\n",*test);
-
-
-    int i;
-    for(i =0;i<NUM_MSR;i++){
-        printk("MSR: %x\n",msr_list[i]);
-        rdmsrl_safe(msr_list[i],&ret[i]);
-        printk("%llu\n",ret[i]);
+nha_read_msr(uint64_t *ret,int type){
+    if (type == 0)
+        *ret = rdtsc();
+    else if (type ==1){
+        uint32_t msr_list[NUM_MSR] = {MSR_APERF,MSR_MPERF,MSR_TSC}; 
+        int i;
+        for(i =0;i<NUM_MSR;i++){
+            rdmsrl_safe(msr_list[i],&ret[i]);
+        }
     }
-
     return 0;
 }
