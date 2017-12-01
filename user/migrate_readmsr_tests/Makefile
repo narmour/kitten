@@ -6,7 +6,7 @@ BASE=..
 PREFIX=$(O)/$(BASE)/install
 LIBDIRS += -L$(PREFIX)/lib
 PROGRAMS=tests
-CFLAGS= -static $(LIBDIRS) -std=c99
+CFLAGS= -static $(LIBDIRS) -std=c99 -lm
 $(info CFLAGS is $(CFLAGS))
 INCDIRS += \
 	-I. \
@@ -19,8 +19,11 @@ INCDIRS += \
 all: $(PROGRAMS)
 
 $(PROGRAMS): $(PROGRAMS).o
-	gcc  $(CFLAGS) -o $(PROGRAMS) $(PROGRAMS).o ../liblwk/liblwk.a -lpthread
+	gcc  $(CFLAGS) -o $(PROGRAMS) $(PROGRAMS).o ../liblwk/liblwk.a -lpthread -lm
 	install -m 0755 $(PROGRAMS) $(PREFIX)/bin
+LINUX.out: $(PROGRAMS).o
+	gcc  $(CFLAGS) -o LINUX.out $(PROGRAMS).o ../liblwk/liblwk.a -lpthread -lm
+	
 
 $(PROGRAMS).o: tests.c
 	gcc $(INCDIRS) -c  tests.c  ../liblwk/liblwk.a

@@ -14,8 +14,8 @@
 #include <sys/ioctl.h>
 #include <math.h>
 
-#define SAMPLES 5// number of samples to get per test
-#define ITERS 1 // number of runs per test taking SAMPLES
+#define SAMPLES 100// number of samples to get per test
+#define ITERS 5 // number of runs per test taking SAMPLES
 /* GLOBALS */
 int numcpu = 2;
 uint64_t max_non_turbo;
@@ -29,28 +29,29 @@ void *migrate_func(void *args);
 
 /*
  * calculates mean, std dev of data
+ * data needs to be pre allocated as 2d double array   ITERS by samples
  */
-void stat_data(uint64_t data[][SAMPLES]){
-    int i,j;
-    uint64_t mean;
-    
+void stat_data(void *data,void* mean, void *sdev, int samples){
 
-    for(i =0;i<ITERS;i++){
-        for(j =0;j<SAMPLES;j++){
-            print("%llu ",data[i][j]);
-        }
-        print("\n");
-    }
-}
-void multi_stat_data(uint64_t data[][SAMPLES]){
+    double (*DATA)[ITERS][samples] = data;
+    double (*MEAN)[ITERS] = mean;
+    double (*SDEV)[ITERS] = sdev;
     int i,j;
-
-    for(i =0;i<ITERS;i++){
-        for(j =0;j<SAMPLES *numcpu;j++){
-            print("%llu ",data[i][j]);
+   // Get the mean
+   for(i =0;i<ITERS;i++)
+       for(j=0;j < samples;j++){
+           (*MEAN)[i] += (*DATA)[i][j];
         }
-        print("\n");
-    }
+   for(i =0;i<ITERS;i++)
+       (*MEAN)[i]/= samples;
+
+
+   // Get the STD DEV
+   for(i=0;i<ITERS;i++){
+       for(j=0;j<samples;j++)
+           (*SDEV)[i] += pow((*DATA)[i][j] - (*MEAN)[i],2); 
+       (*SDEV)[i]/= samples-1;
+   }
 }
 
 void read_tsc_test(){
@@ -85,7 +86,7 @@ void read_tsc_test(){
             for(j =0;j<SAMPLES;j++){
                 nha_read_msr(&timestamps[i][j],0);
             }
-        stat_data(timestamps);
+        //stat_data(timestamps);
     }
 }
 
@@ -101,11 +102,24 @@ double current_time(){
  */
 void thread_migrate_test(){
     int i,j;
-    uint64_t thread_delta_timestamps[ITERS][SAMPLES];
+    double thread_delta_timestamps[ITERS][SAMPLES];
+    double mean[ITERS];
+    double sdev[ITERS];
 
     pthread_t thread;
     pthread_create(&thread,NULL,migrate_func,thread_delta_timestamps);
     pthread_join(thread,NULL);
+    stat_data(thread_delta_timestamps,mean,sdev,SAMPLES);
+
+    for(i=0;i<ITERS;i++){
+        printf("RUN %i\n",i);
+
+        printf("MEAN: %.15lf\n",mean[i]);
+        printf("SDEV: %.15lf\n\n",sdev[i]);
+    }
+
+
+
 }
 
 /*
@@ -114,7 +128,7 @@ void thread_migrate_test(){
  *
  */
 void *migrate_func(void *args){
-    uint64_t (*timestamps)[ITERS][SAMPLES] = args;
+    double (*timestamps)[ITERS][SAMPLES] = args;
     cpu_set_t cpuset;
     int i,j,cpu;
     double pre,post;
@@ -132,7 +146,7 @@ void *migrate_func(void *args){
                 pre = current_time();
                 pthread_setaffinity_np(pthread_self(),sizeof(cpuset),&cpuset);
                 post = current_time();
-                (*timestamps)[i][j] = post-pre;
+                (*timestamps)[i][j] = (post-pre)/(2.5 *1000000000);
             }
             else if (KITTEN){
                 cpu = sched_getcpu();
@@ -147,7 +161,7 @@ void *migrate_func(void *args){
                 else
                     printf("SCHED_GETCPU broke\n");
                 post = current_time();
-                (*timestamps)[i][j] = post-pre;
+                (*timestamps)[i][j] = (post-pre)/(2.3*1000000000);
             }
         }
 }
@@ -156,15 +170,24 @@ void *migrate_func(void *args){
 /*
  * Multi Core MSR sampling function.
  * Will read APERF, MPERF, TSC on core 0 and 1
+ * I discard APERF/MPERF since im just looking at TSC....
  *
  * Linux uses msr_safe batch interface
  * Kitten uses nha_read_msr and task_switch_cpus
  */
 void multi_core_msr_test(){
+    uint64_t CORE0_TSC[ITERS][SAMPLES]={{0}};
+    uint64_t CORE1_TSC[ITERS][SAMPLES]={{0}};
+    double CORE0_DELTA[ITERS][SAMPLES-1]={{0}};
+    double CORE1_DELTA[ITERS][SAMPLES-1]={{0}};
+    double CORE0_MEAN[ITERS] = {0};
+    double CORE1_MEAN[ITERS] = {0};
+    double CORE0_SDEV[ITERS] = {0.0};
+    double CORE1_SDEV[ITERS] = {0.0};
     if(LINUX){
-        uint64_t APERF[ITERS][SAMPLES];
-        uint64_t MPERF[ITERS][SAMPLES];
-        uint64_t TSC[ITERS][SAMPLES];
+        //uint64_t APERF[ITERS][SAMPLES];
+        //uint64_t MPERF[ITERS][SAMPLES];
+        //uint64_t TSC[ITERS][SAMPLES];
         int i,j,k,res;
         /* setup ioctl to msr module to read APERF, MPERF, TSC */
         struct msr_batch_array ba;
@@ -195,24 +218,49 @@ void multi_core_msr_test(){
         for(i=0;i<ITERS;i++){
             for(j=0;j<SAMPLES;j++){
                 res = ioctl(bfd,X86_IOC_MSR_BATCH,&ba);
-                for(k=0;k<numcpu;k++){
-                    APERF[i][j] = ba.ops[(k*3)].msrdata;
-                    MPERF[i][j] = ba.ops[(k*3) + 1].msrdata;
-                    TSC[i][j] = ba.ops[(k*3) + 2].msrdata;
-                }
-            }
+                CORE0_TSC[i][j] = ba.ops[2].msrdata;
+                CORE1_TSC[i][j] = ba.ops[5].msrdata;
+                //APERF[i][j] = ba.ops[(k*3)].msrdata;
+                //MPERF[i][j] = ba.ops[(k*3) + 1].msrdata;
+                //TSC[i][j] = ba.ops[(k*3) + 2].msrdata;
+
+             }
         }
         close(bfd);
+
+
+        // DATA ANALYSIS
+
+
+        // Get the Deltas
+        for(i = 0;i<ITERS;i++)
+            for(j=0;j<SAMPLES-1;j++){
+                CORE0_DELTA[i][j] = (CORE0_TSC[i][j+1] - CORE0_TSC[i][j])/(2.5*1000000000);
+                CORE1_DELTA[i][j] = (CORE1_TSC[i][j+1] - CORE0_TSC[i][j])/(2.5*1000000000);
+                //printf("CORE0_DELTA: %.15f\n",CORE0_DELTA[i][j]);
+            }
+        stat_data(CORE0_DELTA,CORE0_MEAN,CORE0_SDEV,SAMPLES-1);
+        stat_data(CORE1_DELTA,CORE1_MEAN,CORE1_SDEV,SAMPLES-1);
+
+        for(i = 0;i<ITERS;i++){
+           printf("RUN %i\n",i);
+           printf("CORE0 STDEV: %.15f\n",(double)CORE0_SDEV[i]);
+           printf("CORE1 STDEV: %.15f\n",(double)CORE1_SDEV[i]);
+
+           printf("CORE0 MEAN: %.15f\n",(double)CORE0_MEAN[i]);
+           printf("CORE1 MEAN: %.15f\n",(double)CORE1_MEAN[i]);
+           printf("\n");
+
+
+
+        }
+       printf("LINUX\n");
     }
     
     else if(KITTEN){
         //uint64_t APERF[ITERS][SAMPLES * numcpu];
         //uint64_t MPERF[ITERS][SAMPLES * numcpu];
-        uint64_t TSC[ITERS][SAMPLES * numcpu];
-        uint64_t CORE0_TSC[ITERS][SAMPLES];
-        uint64_t CORE1_TSC[ITERS][SAMPLES];
-        uint64_t CORE0_TSC_DELTA[ITERS][SAMPLES-1];
-        uint64_t CORE1_TSC_DELTA[ITERS][SAMPLES-1];
+        //uint64_t TSC[ITERS][SAMPLES * numcpu];
         uint64_t ALL[ITERS][SAMPLES * 6] = {{69}};
         int i,j,k,idx,lastidx;
 
@@ -229,7 +277,7 @@ void multi_core_msr_test(){
          * .
          *
          */
-        printf("idx: ");
+        //printf("idx: ");
         for(i=0;i<ITERS;i++){
             for(j=0;j<SAMPLES;j++){
                 idx = j*6;
@@ -237,7 +285,7 @@ void multi_core_msr_test(){
                 for(k=0;k<numcpu;k++){
                     task_switch_cpus(k);
                     idx +=(k*3); // probably a better way to handle this lol
-                    printf("%i ",idx);
+                    //printf("%i ",idx);
                     nha_read_msr(&ALL[i][idx],1);
                 }
             }
@@ -261,11 +309,12 @@ void multi_core_msr_test(){
          * Split ALL to make my life easier? 
          * I only really care about TSC...
          */
-        idx = 2; // core 0 sample 0 TSC
-        int jj = 0;
-        int jjj = 0;
-        int core = 0;
+        int jj,jjj,core;
         for(i =0;i<ITERS;i++){
+            idx = 2; // core 0 sample 0 TSC
+            jj = 0;
+            jjj =0;
+            core = 0;
             for(j =0; j < SAMPLES * numcpu;j++){
                     //TSC[i][j] = ALL[i][idx];
                     if(core ==0){
@@ -282,30 +331,28 @@ void multi_core_msr_test(){
                 }
         }
 
-
-        printf("CORE 0: ");
-        stat_data(CORE0_TSC);
-        printf("CORE 1: ");
-        stat_data(CORE1_TSC);
-
-        printf("\n\n");
-
-
         // DATA ANALYSIS 
-        double CORE0_DELTA[ITERS][SAMPLES-1];
-        double CORE1_DELTA[ITERS][SAMPLES-1];
-        double CORE0_MEAN[ITERS] = {0};
-        double CORE1_MEAN[ITERS] = {0};
-        double CORE0_SDEV[ITERS] = {0.0};
-        double CORE1_SDEV[ITERS] = {0.0};
         for(i =0;i<ITERS;i++)
             for(j=0;j < SAMPLES-1;j++){
                 CORE0_DELTA[i][j] = (double)(CORE0_TSC[i][j+1] - CORE0_TSC[i][j]) / (2.3 * 1000000000);
                 CORE1_DELTA[i][j] = (double)(CORE1_TSC[i][j+1] - CORE1_TSC[i][j]) / (2.3 * 1000000000);
                 //CORE0_DELTA[i][j] = (double)(CORE0_TSC[i][j+1] - CORE0_TSC[i][j]);
                 //CORE1_DELTA[i][j] = (double)(CORE1_TSC[i][j+1] - CORE1_TSC[i][j]);
-                printf("CORE0DELTA: %f\n",CORE0_DELTA[i][j]);
+                //printf("CORE0DELTA: %f\n",CORE0_DELTA[i][j]);
             }
+
+        stat_data(CORE0_DELTA,CORE0_MEAN,CORE0_SDEV,SAMPLES-1);
+        stat_data(CORE1_DELTA,CORE1_MEAN,CORE1_SDEV,SAMPLES-1);
+       for(i=0;i<ITERS;i++){
+           printf("RUN %i\n",i);
+           printf("CORE0 STDEV: %.15f\n",(double)CORE0_SDEV[i]);
+           printf("CORE1 STDEV: %.15f\n",(double)CORE1_SDEV[i]);
+
+           printf("CORE0 MEAN: %.15f\n",(double)CORE0_MEAN[i]);
+           printf("CORE1 MEAN: %.15f\n",(double)CORE1_MEAN[i]);
+           printf("\n");
+       } 
+        /*
         // Get the mean
         for(i =0;i<ITERS;i++)
             for(j=0;j < SAMPLES-1;j++){
@@ -315,8 +362,8 @@ void multi_core_msr_test(){
         for(i =0;i<ITERS;i++){
             CORE0_MEAN[i]/= (SAMPLES-1);
             CORE1_MEAN[i]/= (SAMPLES-1);
-            printf("CORE0_MEAN: %f\n",CORE0_MEAN[i]);
-            printf("CORE1_MEAN: %f\n",CORE1_MEAN[i]);
+            //printf("CORE0_MEAN: %f\n",CORE0_MEAN[i]);
+            //printf("CORE1_MEAN: %f\n",CORE1_MEAN[i]);
         }
 
         // Get the STD DEV
@@ -326,15 +373,8 @@ void multi_core_msr_test(){
                 CORE1_SDEV[i] += pow((CORE1_DELTA[i][j] - CORE1_MEAN[i]),2); 
             }
         }
-        printf("curr sd  %f\n",CORE0_SDEV[0]);
 
-       for(i=0;i<ITERS;i++){
-           CORE0_SDEV[i] = CORE0_SDEV[i]/(SAMPLES-2);
-           CORE1_SDEV[i] = CORE1_SDEV[i]/(SAMPLES-2);
-
-           printf("CORE0 STDEV: %.10f\n",(double)CORE0_SDEV[i]);
-           printf("CORE1 STDEV: %.15f\n",(double)CORE1_SDEV[i]);
-       } 
+       */
 
         
     }
@@ -360,8 +400,8 @@ int main(){
     //max_non_turbo = (platform_info >> 8) & 0xFF;
 
     //read_tsc_test();
-    //thread_migrate_test();
-    multi_core_msr_test();
+    thread_migrate_test();
+    //multi_core_msr_test();
     //test_func();
     return 0;
 }
